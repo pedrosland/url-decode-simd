@@ -78,20 +78,54 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let second1 = _mm_and_si128(chunk, mask2);
         print_m128i!("second1", second1);
 
-        // first digit
-        let byte_zero: __m128i = _mm_set1_epi8(b'0' as i8);
-        let first1 = _mm_sub_epi8(first1, byte_zero);
-        let first1 = _mm_and_si128(first1, mask1);
-        print_m128i!("first1-2", first1);
+        // Decode hex
+        let first_and_second = _mm_or_si128(first1, second1);
+
+        // First hex digit
+
+        // number
+        let byte_zero = _mm_set1_epi8(b'0' as i8);
+        let digit_mask1 = _mm_cmplt_epi8(first_and_second, _mm_set1_epi8(b':' as i8)); // : is character after 9
+        let digit_mask2 = _mm_cmpgt_epi8(first_and_second, _mm_set1_epi8(b'/' as i8)); // / is character before 0
+        let digit_mask = _mm_and_si128(digit_mask1, digit_mask2);
+        let first_part1 = _mm_and_si128(digit_mask, _mm_sub_epi8(first_and_second, byte_zero));
+        print_m128i!("digit_mask1", digit_mask);
+        print_m128i!("first1-1", first_part1);
+
+        // uppercase
+        let byte_upper = _mm_set1_epi8(b'A' as i8 - 10);
+        let digit_mask1 = _mm_cmplt_epi8(first_and_second, _mm_set1_epi8(b'G' as i8)); // G is character after F
+        let digit_mask2 = _mm_cmpgt_epi8(first_and_second, _mm_set1_epi8(b'@' as i8)); // @ is character before A
+        let digit_mask = _mm_and_si128(digit_mask1, digit_mask2);
+        let first_part2 = _mm_and_si128(digit_mask, _mm_sub_epi8(first_and_second, byte_upper));
+        print_m128i!("digit_mask2", digit_mask);
+        print_m128i!("first1-2", first_part2);
+
+        // lowercase
+        let byte_lower = _mm_set1_epi8(b'a' as i8 - 10);
+        let digit_mask1 = _mm_cmplt_epi8(first_and_second, _mm_set1_epi8(b'g' as i8)); // g is character after f
+        let digit_mask2 = _mm_cmpgt_epi8(first_and_second, _mm_set1_epi8(b'`' as i8)); // ` is character before a
+        let digit_mask = _mm_and_si128(digit_mask1, digit_mask2);
+        let first_part3 = _mm_and_si128(digit_mask, _mm_sub_epi8(first_and_second, byte_lower));
+        print_m128i!("digit_mask3", digit_mask);
+        print_m128i!("first1-3", first_part3);
+
+        // merge first hex digit transforms
+        let first_and_second = _mm_or_si128(_mm_or_si128(first_part1, first_part2), first_part3);
+
+        // merge first hex digit
+
+        // let first1 = _mm_and_si128(first1, mask1);
+        // print_m128i!("first1-trimmed", first1);
 
         // Note: I really want a `<< 4` for epi8 but it doesn't exist :(
-        let first1 = _mm_slli_epi16(first1, 4);
+        let first1 = _mm_slli_epi16(_mm_and_si128(mask1, first_and_second), 4);
         let first1 = _mm_and_si128(first1, mask1);
-        print_m128i!("first1-3", first1);
+        print_m128i!("first1-merged", first1);
 
-        // second digit
-        let second1 = _mm_sub_epi8(second1, byte_zero);
-        let second1 = _mm_srli_si128(second1, 1);
+        // Second hex digit
+
+        let second1 = _mm_srli_si128(_mm_and_si128(first_and_second, mask2), 1);
 
         // merge
         let hex = _mm_or_si128(first1, second1);
@@ -258,11 +292,26 @@ mod tests {
     }
 
     #[test]
-    fn url_decode_upper_hex() {
+    fn url_decode_upper_hex_KaLb_numbers() {
         let v = &[
             0x25, 0x34, 0x42, // %4B
             0x61, // a
-            0x25, 0x34, 0x32, // %4C
+            0x25, 0x34, 0x43, // %4C
+            0x62, // b
+            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
+        ];
+        let mut result = Vec::new();
+
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!("KaLb12345678".as_bytes(), &result[..])
+    }
+
+    #[test]
+    fn url_decode_lower_hex_KaLb_numbers() {
+        let v = &[
+            0x25, 0x34, 0x62, // %4b
+            0x61, // a
+            0x25, 0x34, 0x63, // %4c
             0x62, // b
             0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
         ];

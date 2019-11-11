@@ -161,11 +161,26 @@ mod tests {
     }
 
     #[test]
-    fn url_decode_upper_hex() {
+    fn url_decode_upper_hex_KaLb_numbers() {
         let v = &[
             0x25, 0x34, 0x42, // %4B
             0x61, // a
-            0x25, 0x34, 0x32, // %4C
+            0x25, 0x34, 0x43, // %4C
+            0x62, // b
+            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
+        ];
+        let mut result = Vec::new();
+
+        decode(v, &mut result);
+        assert_eq!("KaLb12345678".as_bytes(), &result[..])
+    }
+
+    #[test]
+    fn url_decode_lower_hex_KaLb_numbers() {
+        let v = &[
+            0x25, 0x34, 0x62, // %4b
+            0x61, // a
+            0x25, 0x34, 0x63, // %4c
             0x62, // b
             0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
         ];
