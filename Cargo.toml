@@ -1,0 +1,17 @@
+[package]
+name = "url-decode-simd"
+version = "0.1.0"
+authors = ["Peter Sutherland <pedrosland+url-decode-simd@gmail.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pedrosland/url-decode-simd"
+
+[dependencies]
+memchr = "2.2.1"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "benchmark"
+harness = false
