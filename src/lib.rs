@@ -63,6 +63,8 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let search: __m128i = _mm_set1_epi8(b'%' as i8);
 
         let found = _mm_cmpeq_epi8(chunk, search);
+        let found = _mm_and_si128(found, _mm_xor_si128(found, _mm_srli_si128(found, 1)));
+        let found = _mm_and_si128(found, _mm_xor_si128(found, _mm_srli_si128(found, 2)));
         print_m128i!("found", found);
 
         // Find the next 2 bytes
@@ -89,6 +91,7 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let digit_mask2 = _mm_cmpgt_epi8(first_and_second, _mm_set1_epi8(b'/' as i8)); // / is character before 0
         let digit_mask = _mm_and_si128(digit_mask1, digit_mask2);
         let first_part1 = _mm_and_si128(digit_mask, _mm_sub_epi8(first_and_second, byte_zero));
+        let valid_mask = digit_mask;
         print_m128i!("digit_mask1", digit_mask);
         print_m128i!("first1-1", first_part1);
 
@@ -98,6 +101,7 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let digit_mask2 = _mm_cmpgt_epi8(first_and_second, _mm_set1_epi8(b'@' as i8)); // @ is character before A
         let digit_mask = _mm_and_si128(digit_mask1, digit_mask2);
         let first_part2 = _mm_and_si128(digit_mask, _mm_sub_epi8(first_and_second, byte_upper));
+        let valid_mask = _mm_or_si128(valid_mask, digit_mask);
         print_m128i!("digit_mask2", digit_mask);
         print_m128i!("first1-2", first_part2);
 
@@ -107,11 +111,21 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let digit_mask2 = _mm_cmpgt_epi8(first_and_second, _mm_set1_epi8(b'`' as i8)); // ` is character before a
         let digit_mask = _mm_and_si128(digit_mask1, digit_mask2);
         let first_part3 = _mm_and_si128(digit_mask, _mm_sub_epi8(first_and_second, byte_lower));
+        let valid_mask = _mm_or_si128(valid_mask, digit_mask);
         print_m128i!("digit_mask3", digit_mask);
         print_m128i!("first1-3", first_part3);
 
+        // both digits must be valid
+        let valid_mask = _mm_and_si128(valid_mask, _mm_slli_si128(valid_mask, 1));
+        let valid_mask = _mm_or_si128(valid_mask, _mm_srli_si128(valid_mask, 1));
+        let valid_mask = _mm_or_si128(valid_mask, _mm_srli_si128(valid_mask, 1));
+        print_m128i!("valid_mask", valid_mask);
+        let found = _mm_and_si128(valid_mask, found);
+        print_m128i!("found2", found);
+
         // merge first hex digit transforms
         let first_and_second = _mm_or_si128(_mm_or_si128(first_part1, first_part2), first_part3);
+        let first_and_second = _mm_and_si128(valid_mask, first_and_second);
 
         // merge first hex digit
 
@@ -192,11 +206,12 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         // Produce the shuffle map with a loop.
 
         let mut shuffle_map: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let found_arr: [u8; 16] = mem::transmute(found);
         let mut num_junk = 0usize;
         let mut out_i = 0;
         for in_i in 0..16 {
             shuffle_map[out_i] = num_junk as u8;
-            if src[in_i] == b'%' {
+            if found_arr[in_i] > 0 {
                 num_junk += 2;
                 if num_junk > 2 {
                     out_i -= 2;
@@ -319,5 +334,35 @@ mod tests {
 
         unsafe { url_decode(v, &mut result) };
         assert_eq!("KaLb12345678".as_bytes(), &result[..])
+    }
+
+    #[test]
+    fn test_decode_invalid_chars() {
+        let mut result = Vec::new();
+        
+        let v = b"%%12345678901234";
+        result.clear();
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"%\x12345678901234", &result[..]);
+        
+        let v = b"%1%2345678901234";
+        result.clear();
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"%1\x2345678901234", &result[..]);
+
+        let v = b"%%%1234567890123";
+        result.clear();
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"%%\x1234567890123", &result[..]);
+
+        let v = b"%+12345678901234";
+        result.clear();
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"%+12345678901234", &result[..]);
+
+        let v = b"%1+2345678901234";
+        result.clear();
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"%1+2345678901234", &result[..]);
     }
 }
