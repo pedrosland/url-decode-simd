@@ -36,6 +36,14 @@ pub (crate) fn decode(src: &[u8], dst: &mut Vec<u8>) {
     };
 }
 
+pub (crate) fn decode_extend(src: &[u8], dst: &mut Vec<u8>) {
+    let src = replace_plus(src);
+    match percent_decode(&src).if_any() {
+        Some(vec) => dst.extend_from_slice(&vec),
+        None => dst.extend_from_slice(&src),
+    };
+}
+
 /// The return type of [`percent_decode`].
 #[derive(Clone, Debug)]
 struct PercentDecode<'a> {
@@ -188,5 +196,83 @@ mod tests {
 
         decode(v, &mut result);
         assert_eq!("KaLb12345678".as_bytes(), &result[..])
+    }
+
+    #[test]
+    fn test_decode_invalid_chars() {
+        let mut result = Vec::new();
+
+        let v = b"%%12345678901234";
+        result.clear();
+        decode(v, &mut result);
+        assert_eq!(b"%\x12345678901234", &result[..]);
+
+        let v = b"%1%2345678901234";
+        result.clear();
+        decode(v, &mut result);
+        assert_eq!(b"%1\x2345678901234", &result[..]);
+
+        let v = b"%%%1234567890123";
+        result.clear();
+        decode(v, &mut result);
+        assert_eq!(b"%%\x1234567890123", &result[..]);
+
+        let v = b"%-12345678901234";
+        result.clear();
+        decode(v, &mut result);
+        assert_eq!(b"%-12345678901234", &result[..]);
+
+        let v = b"%1-2345678901234";
+        result.clear();
+        decode(v, &mut result);
+        assert_eq!(b"%1-2345678901234", &result[..]);
+    }
+
+    #[test]
+    fn test_random_junk() {
+        let mut result = Vec::new();
+
+        let v = b"\xCF%%sA\x00`A%5%%6%6\xEF";
+        decode(v, &mut result);
+        assert_eq!(b"\xCF%%sA\x00`A%5%%6%6\xEF", &result[..]);
+    }
+
+    #[test]
+    fn test_end_percent() {
+        let mut result = Vec::new();
+
+        let v = b"\xCF%%sA\x00`A%5%%6%6%";
+        decode(v, &mut result);
+        assert_eq!(b"\xCF%%sA\x00`A%5%%6%6%", &result[..]);
+
+        let v = b"\xCF%%sA\x00`A%5%%6%%6";
+        result.clear();
+        decode(v, &mut result);
+        assert_eq!(b"\xCF%%sA\x00`A%5%%6%%6", &result[..]);
+    }
+
+    #[test]
+    fn test_split_percent() {
+        let mut result = Vec::new();
+
+        // last char of block is %
+        let v = b"aaaaaaaaaaaaaaa%aaaaaaaaaaaaaaaa";
+        decode(v, &mut result);
+        assert_eq!(b"aaaaaaaaaaaaaaa\xAAaaaaaaaaaaaaaa", &result[..]);
+
+        // 2nd last char of block is %
+        let v = b"aaaaaaaaaaaaaa%aaaaaaaaaaaaaaaaa";
+        result.clear();
+        decode(v, &mut result);
+        assert_eq!(b"aaaaaaaaaaaaaa\xAAaaaaaaaaaaaaaaa", &result[..]);
+    }
+
+    #[test]
+    fn test_out_of_ascii_hex() {
+        let mut result = Vec::new();
+
+        let v = b"%AAaaaaaaaaaaaaa";
+        decode(v, &mut result);
+        assert_eq!(b"\xAAaaaaaaaaaaaaa", &result[..]);
     }
 }

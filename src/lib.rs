@@ -57,6 +57,7 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     while src.len() >= 16 {
         // Load data from unaligned address.
         // TODO: is this notably slower than loading from an aligned address?
+        // TODO: is _mm_lddqu_si128 better?
         let chunk: __m128i = _mm_loadu_si128(src.as_ptr() as *const __m128i);
         print_m128i!("chunk", chunk);
 
@@ -129,9 +130,6 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
 
         // merge first hex digit
 
-        // let first1 = _mm_and_si128(first1, mask1);
-        // print_m128i!("first1-trimmed", first1);
-
         // Note: I really want a `<< 4` for epi8 but it doesn't exist :(
         let first1 = _mm_slli_epi16(_mm_and_si128(mask1, first_and_second), 4);
         let first1 = _mm_and_si128(first1, mask1);
@@ -154,8 +152,6 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         print_m128i!("found2", found);
         print_m128i!("hex2", hex);
 
-        // shift mask
-        let plain_shuffle_map = _mm_set_epi8(15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0);
 
         // print_m128i!("ignore_mask", ignore_mask);
 
@@ -203,43 +199,95 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         // println!("num_junk: {}", num_junk);
         // let end = 16 - num_junk;
 
+        // If trying to reproduce the loop with SIMD, considered:
+        //   * _mm_cmpistrz - for zeroing out the until the first valid %.
+
         // Produce the shuffle map with a loop.
+        // This loop costs about 45% of this function time!!!
 
-        let mut shuffle_map: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let found_arr: [u8; 16] = mem::transmute(found);
-        let mut num_junk = 0usize;
-        let mut out_i = 0;
-        for in_i in 0..16 {
-            shuffle_map[out_i] = num_junk as u8;
-            if found_arr[in_i] > 0 {
-                num_junk += 2;
-                if num_junk > 2 {
-                    out_i -= 2;
+        // let mut shuffle_map: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        // let found_arr: [u8; 16] = mem::transmute(found);
+        // let mut num_junk = 0usize;
+        // let mut out_i = 0;
+        // for in_i in 0..16 {
+        //     shuffle_map[out_i] = num_junk as u8;
+        //     if found_arr[in_i] > 0 {
+        //         num_junk += 2;
+        //         if num_junk > 2 {
+        //             out_i -= 2;
+        //         }
+        //     }
+        //     out_i += 1;
+        // }
+
+        let mut shift_mask = _mm_set1_epi8(255u8 as i8);
+        let mut percent_offset = 0b1;
+        // Sample 16 bytes to 16 bits for ease of use
+        let found_mask = _mm_movemask_epi8(found) as u32;
+        let two = _mm_set1_epi8(2);
+
+        // Instead of all this fiddling, could we use a lookup table keyed with 2^16 keys
+        //  which has all of the possible movemask combinations?
+        // This value could be inflated with avx512's _mm_mask_blend_epi8.
+        // Without using avx512, shuffle could be used.
+
+        // Another idea is to swap the order of found_mask using _bswap64 and then
+        //  we can access some bit operations like find index of lowest set bit
+        //  and clear lowest set bit.
+
+        // This loop is about as expensive as the more boring loop (~45% of the function time).
+        // A noticable difference is that the compiler doesn't unroll the original
+        // but it does unroll this loop.
+        let mut offset_map = _mm_set1_epi8(0);
+        let mut num_percent = 0;
+        for _ in 0..16 {
+            shift_mask = _mm_slli_si128(shift_mask, 1);
+            if percent_offset & found_mask > 0 {
+                print_m128i!("shift_mask", shift_mask);
+                let mut this_offset = _mm_and_si128(two, shift_mask);
+                for _ in 0..num_percent {
+                    this_offset = _mm_srli_si128(this_offset, 2);
                 }
+                print_m128i!("this_offset", this_offset);
+                offset_map = _mm_add_epi8(this_offset, offset_map);
+                print_m128i!("offset_map", offset_map);
+                num_percent += 1;
             }
-            out_i += 1;
+            percent_offset = percent_offset << 1;
         }
-        let end = 16 - num_junk;
-        let shuffle_map = mem::transmute(shuffle_map);
 
-        let shuffle_map = _mm_add_epi8(plain_shuffle_map, shuffle_map);
+        let num_junk = 2 * num_percent;
+
+        // Calculate number of bits to process next time.
+        // This is because we end in % or %X and can't decode bytes that aren't in the chunk.
+
+        let mut shift_next = 0;
+        if src[14] == b'%' {
+            shift_next += 2;
+        } else if src[15] == b'%' {
+            shift_next += 1;
+        }
+
+        let src_end = 16 - shift_next;
+        let dst_end = src_end - num_junk;
+
+        // Shuffle the output
+        let plain_shuffle_map = _mm_set_epi8(15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0);
+        let shuffle_map = _mm_add_epi8(plain_shuffle_map, offset_map);
         print_m128i!("shuffle_map", shuffle_map);
-
-        // let shift_mask = _mm_blendv_epi8(shift_mask, _mm_set1_epi8(15), ignore_mask);
-        // print_m128i!("shift_mask3", shift_mask);
-
 
         let hex = _mm_shuffle_epi8(hex, shuffle_map);
 
         // Copy to dst
         let x: [u8; 16] = mem::transmute(hex);
-        dst.extend_from_slice(&x[..end]);
-        // dst.truncate(dst_offset + end);
-        // TODO: should the above copy use _mm_storeu_si128 instead?
+        dst.extend_from_slice(&x[..dst_end]);
 
         // Advance
-        // dst_offset += end;
-        src = &src[16..];
+        src = &src[src_end..];
+    }
+
+    if src.len() > 0 {
+        fallback::decode_extend(src, dst);
     }
 }
 
@@ -283,7 +331,7 @@ mod tests {
             0x61, // a
             0x25, 0x34, 0x32, // %42
             0x62, // b
-            0, 0, 0, 0, 0, 0, 0, 0
+            0, 0, 0, 0, 0, 0, 0, 0,
         ];
         let mut result = Vec::new();
 
@@ -339,12 +387,12 @@ mod tests {
     #[test]
     fn test_decode_invalid_chars() {
         let mut result = Vec::new();
-        
+
         let v = b"%%12345678901234";
         result.clear();
         unsafe { url_decode(v, &mut result) };
         assert_eq!(b"%\x12345678901234", &result[..]);
-        
+
         let v = b"%1%2345678901234";
         result.clear();
         unsafe { url_decode(v, &mut result) };
@@ -355,14 +403,62 @@ mod tests {
         unsafe { url_decode(v, &mut result) };
         assert_eq!(b"%%\x1234567890123", &result[..]);
 
-        let v = b"%+12345678901234";
+        let v = b"%-12345678901234";
         result.clear();
         unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"%+12345678901234", &result[..]);
+        assert_eq!(b"%-12345678901234", &result[..]);
 
-        let v = b"%1+2345678901234";
+        let v = b"%1-2345678901234";
         result.clear();
         unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"%1+2345678901234", &result[..]);
+        assert_eq!(b"%1-2345678901234", &result[..]);
+    }
+
+    #[test]
+    fn test_random_junk() {
+        let mut result = Vec::new();
+
+        let v = b"\xCF%%sA\x00`A%5%%6%6\xEF";
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"\xCF%%sA\x00`A%5%%6%6\xEF", &result[..]);
+    }
+
+    #[test]
+    fn test_end_percent() {
+        let mut result = Vec::new();
+
+        let v = b"\xCF%%sA\x00`A%5%%6%6%";
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"\xCF%%sA\x00`A%5%%6%6%", &result[..]);
+
+        let v = b"\xCF%%sA\x00`A%5%%6%%6";
+        result.clear();
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"\xCF%%sA\x00`A%5%%6%%6", &result[..]);
+    }
+
+    #[test]
+    fn test_split_percent() {
+        let mut result = Vec::new();
+
+        // last char of block is %
+        let v = b"aaaaaaaaaaaaaaa%aaaaaaaaaaaaaaaa";
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"aaaaaaaaaaaaaaa\xAAaaaaaaaaaaaaaa", &result[..]);
+
+        // 2nd last char of block is %
+        let v = b"aaaaaaaaaaaaaa%aaaaaaaaaaaaaaaaa";
+        result.clear();
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"aaaaaaaaaaaaaa\xAAaaaaaaaaaaaaaaa", &result[..]);
+    }
+
+    #[test]
+    fn test_out_of_ascii_hex() {
+        let mut result = Vec::new();
+
+        let v = b"%AAaaaaaaaaaaaaa";
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"\xAAaaaaaaaaaaaaa", &result[..]);
     }
 }

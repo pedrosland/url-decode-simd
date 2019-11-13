@@ -15,6 +15,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         ];
         let input: Vec<u8> = (0..*i).map(|_| section.to_vec()).flatten().collect();
 
+        if i > &500_000 {
+            group.sample_size(50);
+        }
+
         group.throughput(Throughput::Bytes(input.len() as u64));
         group.bench_with_input(BenchmarkId::new("simd", i), i,
             |b, _i| b.iter(|| {
