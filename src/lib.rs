@@ -4,6 +4,7 @@ use std::arch::x86_64::*;
 use std::mem;
 
 mod fallback;
+mod shuffle_mask;
 
 pub fn fallback_decode(src: &[u8], dst: &mut Vec<u8>) {
     fallback::decode(src, dst);
@@ -220,11 +221,11 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         //     out_i += 1;
         // }
 
-        let mut shift_mask = _mm_set1_epi8(255u8 as i8);
-        let mut percent_offset = 0b1;
+        // let mut shift_mask = _mm_set1_epi8(255u8 as i8);
+        // let mut percent_offset = 0b1;
         // Sample 16 bytes to 16 bits for ease of use
         let found_mask = _mm_movemask_epi8(found) as u32;
-        let two = _mm_set1_epi8(2);
+        // let two = _mm_set1_epi8(2);
 
         // Instead of all this fiddling, could we use a lookup table keyed with 2^16 keys
         //  which has all of the possible movemask combinations?
@@ -238,25 +239,12 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         // This loop is about as expensive as the more boring loop (~45% of the function time).
         // A noticable difference is that the compiler doesn't unroll the original
         // but it does unroll this loop.
-        let mut offset_map = _mm_set1_epi8(0);
-        let mut num_percent = 0;
-        for _ in 0..16 {
-            shift_mask = _mm_slli_si128(shift_mask, 1);
-            if percent_offset & found_mask > 0 {
-                print_m128i!("shift_mask", shift_mask);
-                let mut this_offset = _mm_and_si128(two, shift_mask);
-                for _ in 0..num_percent {
-                    this_offset = _mm_srli_si128(this_offset, 2);
-                }
-                print_m128i!("this_offset", this_offset);
-                offset_map = _mm_add_epi8(this_offset, offset_map);
-                print_m128i!("offset_map", offset_map);
-                num_percent += 1;
-            }
-            percent_offset = percent_offset << 1;
-        }
-
+        // let mut offset_map = _mm_set1_epi8(0);
+        let num_percent = _popcnt32(found_mask as i32) as usize;
         let num_junk = 2 * num_percent;
+
+        let inflate_shuffle_mask = shuffle_mask::shuffle_mask.get_unchecked(found_mask as usize);
+        let inflate_shuffle_mask = mem::transmute(*inflate_shuffle_mask);
 
         // Calculate number of bits to process next time.
         // This is because we end in % or %X and can't decode bytes that aren't in the chunk.
@@ -268,12 +256,12 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
             shift_next += 1;
         }
 
-        let src_end = 16 - shift_next;
-        let dst_end = src_end - num_junk;
+        let src_end: usize = 16 - shift_next;
+        let dst_end: usize = src_end - num_junk;
 
         // Shuffle the output
         let plain_shuffle_map = _mm_set_epi8(15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0);
-        let shuffle_map = _mm_add_epi8(plain_shuffle_map, offset_map);
+        let shuffle_map = _mm_add_epi8(plain_shuffle_map, inflate_shuffle_mask);
         print_m128i!("shuffle_map", shuffle_map);
 
         let hex = _mm_shuffle_epi8(hex, shuffle_map);
@@ -291,11 +279,72 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     }
 }
 
+fn build_table() {
+    // Note: the last n bytes of the mask are useless depending on how many valid
+    //  percent symbols were found.
+    // Note: the first bit is always 0 for valid masks.
+
+    let max: u16 = 65535;
+    for i in 0..=max {
+        println!("{:?},", unsafe { build_mask(i) });
+    }
+}
+
+unsafe fn build_mask(found_mask: u16) -> [u8; 16] {
+    // let mut shuffle_map: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    // let mut num_junk = 0usize;
+    // let mut out_i = 0;
+    // let mut found_mask = 1<<15;
+    // for _ in 0..16 {
+    //     shuffle_map[out_i] = num_junk as u8;
+    //     found_mask = found_mask >> 1;
+    //     if found & found_mask > 0 {
+    //         if found & (found_mask >> 1) > 0 || found & (found_mask >> 2) > 0 {
+    //             // this is invalid
+    //             return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    //         }
+
+    //         num_junk += 2;
+    //         if num_junk > 2 {
+    //             out_i -= 2;
+    //         }
+    //     }
+    //     out_i += 1;
+    // }
+    // shuffle_map
+
+    let mut shift_mask = _mm_set1_epi8(255u8 as i8);
+    let mut offset_map = _mm_set1_epi8(0);
+    let mut percent_offset = 0b1;
+    // Sample 16 bytes to 16 bits for ease of use
+    let two = _mm_set1_epi8(2);
+    let mut num_percent = 0;
+    for _ in 0..16 {
+        shift_mask = _mm_slli_si128(shift_mask, 1);
+        if percent_offset & found_mask > 0 {
+            let mut this_offset = _mm_and_si128(two, shift_mask);
+            for _ in 0..num_percent {
+                this_offset = _mm_srli_si128(this_offset, 2);
+            }
+            offset_map = _mm_add_epi8(this_offset, offset_map);
+            num_percent += 1;
+        }
+        percent_offset = percent_offset << 1;
+    }
+    mem::transmute(offset_map)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(non_snake_case)]
 
     use super::url_decode;
+
+    // #[test]
+    // fn build_table() {
+    //     super::build_table();
+    //     assert!(false);
+    // }
 
     #[test]
     fn url_decode_space() {
