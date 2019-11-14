@@ -113,89 +113,65 @@ mod tests {
 
     #[test]
     fn url_decode_space() {
-        let v = &[0x25, 0x32, 0x30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let v = b"%20\0\0\0\0\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
         decode(v, &mut result);
-        assert_eq!(" \0\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes(), &result[..])
+        assert_eq!(b" \0\0\0\0\0\0\0\0\0\0\0\0\0", &result[..])
     }
 
     #[test]
     fn url_decode_A() {
-        let v = &[0x25, 0x34, 0x31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let v = b"%41\0\0\0\0\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
         decode(v, &mut result);
-        assert_eq!("A\0\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes(), &result[..])
+        assert_eq!(b"A\0\0\0\0\0\0\0\0\0\0\0\0\0", &result[..])
     }
 
     #[test]
     fn url_decode_AB() {
-        let v = &[0x25, 0x34, 0x31, 0x25, 0x34, 0x32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let v = b"%41%42\0\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
         decode(v, &mut result);
-        assert_eq!("AB\0\0\0\0\0\0\0\0\0\0".as_bytes(), &result[..])
+        assert_eq!(b"AB\0\0\0\0\0\0\0\0\0\0", &result[..])
     }
 
     #[test]
     fn url_decode_AaBb() {
-        let v = &[
-            0x25, 0x34, 0x31, // %41
-            0x61, // a
-            0x25, 0x34, 0x32, // %42
-            0x62, // b
-            0, 0, 0, 0, 0, 0, 0, 0,
-        ];
+        let v = b"%41a%42b\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
         decode(v, &mut result);
-        assert_eq!("AaBb\0\0\0\0\0\0\0\0".as_bytes(), &result[..])
+        assert_eq!(b"AaBb\0\0\0\0\0\0\0\0\0", &result[..])
     }
 
     #[test]
     fn url_decode_AaBb_numbers() {
-        let v = &[
-            0x25, 0x34, 0x31, // %41
-            0x61, // a
-            0x25, 0x34, 0x32, // %42
-            0x62, // b
-            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
-        ];
+        let v = b"%41a%42b12345678";
         let mut result = Vec::new();
 
         decode(v, &mut result);
-        assert_eq!("AaBb12345678".as_bytes(), &result[..])
+        assert_eq!(b"AaBb12345678", &result[..])
     }
 
     #[test]
     fn url_decode_upper_hex_KaLb_numbers() {
-        let v = &[
-            0x25, 0x34, 0x42, // %4B
-            0x61, // a
-            0x25, 0x34, 0x43, // %4C
-            0x62, // b
-            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
-        ];
+        let v = b"%4Ba%4Cb12345678";
         let mut result = Vec::new();
 
         decode(v, &mut result);
-        assert_eq!("KaLb12345678".as_bytes(), &result[..])
+        assert_eq!(b"KaLb12345678", &result[..])
     }
 
     #[test]
     fn url_decode_lower_hex_KaLb_numbers() {
-        let v = &[
-            0x25, 0x34, 0x62, // %4b
-            0x61, // a
-            0x25, 0x34, 0x63, // %4c
-            0x62, // b
-            0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38
-        ];
+        let v = b"%4ba%4cb12345678";
         let mut result = Vec::new();
 
         decode(v, &mut result);
-        assert_eq!("KaLb12345678".as_bytes(), &result[..])
+        assert_eq!(b"KaLb12345678", &result[..])
     }
 
     #[test]
@@ -203,7 +179,6 @@ mod tests {
         let mut result = Vec::new();
 
         let v = b"%%12345678901234";
-        result.clear();
         decode(v, &mut result);
         assert_eq!(b"%\x12345678901234", &result[..]);
 
@@ -229,26 +204,19 @@ mod tests {
     }
 
     #[test]
-    fn test_random_junk() {
-        let mut result = Vec::new();
-
-        let v = b"\xCF%%sA\x00`A%5%%6%6\xEF";
-        decode(v, &mut result);
-        assert_eq!(b"\xCF%%sA\x00`A%5%%6%6\xEF", &result[..]);
-    }
-
-    #[test]
     fn test_end_percent() {
         let mut result = Vec::new();
 
-        let v = b"\xCF%%sA\x00`A%5%%6%6%";
+        // last char of block is %
+        let v = b"aaaaaaaaaaaaaaa%";
         decode(v, &mut result);
-        assert_eq!(b"\xCF%%sA\x00`A%5%%6%6%", &result[..]);
+        assert_eq!(b"aaaaaaaaaaaaaaa%", &result[..]);
 
-        let v = b"\xCF%%sA\x00`A%5%%6%%6";
+        // 2nd last char of block is %
+        let v = b"aaaaaaaaaaaaaa%a";
         result.clear();
         decode(v, &mut result);
-        assert_eq!(b"\xCF%%sA\x00`A%5%%6%%6", &result[..]);
+        assert_eq!(b"aaaaaaaaaaaaaa%a", &result[..]);
     }
 
     #[test]
@@ -274,5 +242,14 @@ mod tests {
         let v = b"%AAaaaaaaaaaaaaa";
         decode(v, &mut result);
         assert_eq!(b"\xAAaaaaaaaaaaaaa", &result[..]);
+    }
+
+    #[test]
+    fn test_random_junk() {
+        let mut result = Vec::new();
+
+        let v = b"\xCF%%sA\x00`A%5%%6%6\xEF";
+        decode(v, &mut result);
+        assert_eq!(b"\xCF%%sA\x00`A%5%%6%6\xEF", &result[..]);
     }
 }
