@@ -223,7 +223,7 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
 
         // let mut shift_mask = _mm_set1_epi8(255u8 as i8);
         // let mut percent_offset = 0b1;
-        // Sample 16 bytes to 16 bits for ease of use
+        // Reduce 16 bytes to 16 bits for ease of use
         let found_mask = _mm_movemask_epi8(found) as u32;
         // let two = _mm_set1_epi8(2);
 
@@ -243,6 +243,8 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let num_percent = _popcnt32(found_mask as i32) as usize;
         let num_junk = 2 * num_percent;
 
+        // shave off the right two bits as they are always 0 or irelevant
+        let found_mask = found_mask & 0b0011111111111111;
         let inflate_shuffle_mask = shuffle_mask::shuffle_mask.get_unchecked(found_mask as usize);
         let inflate_shuffle_mask = mem::transmute(*inflate_shuffle_mask);
 
@@ -284,7 +286,7 @@ fn build_table() {
     //  percent symbols were found.
     // Note: the first bit is always 0 for valid masks.
 
-    let max: u16 = 65535;
+    let max: u16 = 16383; // 14 bits
     for i in 0..=max {
         println!("{:?},", unsafe { build_mask(i) });
     }
