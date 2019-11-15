@@ -80,6 +80,13 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let found = _mm_and_si128(found, _mm_xor_si128(found, _mm_srli_si128(found, 2)));
         print_m128i!("found", found);
 
+        if _mm_test_all_zeros(found, found) > 0 {
+            let x: [u8; 16] = mem::transmute(chunk);
+            dst.extend_from_slice(&x[..16]);
+            src = &src[16..];
+            continue;
+        }
+
         // Find the next 2 bytes
 
         let mask1 = _mm_slli_si128(found, 1);

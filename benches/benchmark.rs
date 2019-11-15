@@ -20,7 +20,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         }
 
         group.throughput(Throughput::Bytes(input.len() as u64));
-        group.bench_with_input(BenchmarkId::new("simd", i), i,
+        group.bench_with_input(BenchmarkId::new("mixed simd", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
                 unsafe { url_decode(black_box(input.as_slice()), &mut output) }
@@ -28,7 +28,34 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             })
         );
 
-        group.bench_with_input(BenchmarkId::new("fallback", i), i,
+        group.bench_with_input(BenchmarkId::new("mixed fallback", i), i,
+            |b, _i| b.iter(|| {
+                let mut output = Vec::with_capacity(input.len());
+                fallback_decode(black_box(input.as_slice()), &mut output);
+                output
+            })
+        );
+    }
+
+    group.sample_size(100);
+    for i in [1, 10, 1310720].iter() {
+        let section: &[u8] = b"1234567890123456";
+        let input: Vec<u8> = (0..*i).map(|_| section.to_vec()).flatten().collect();
+
+        if i > &500_000 {
+            group.sample_size(50);
+        }
+
+        group.throughput(Throughput::Bytes(input.len() as u64));
+        group.bench_with_input(BenchmarkId::new("no-op simd", i), i,
+            |b, _i| b.iter(|| {
+                let mut output = Vec::with_capacity(input.len());
+                unsafe { url_decode(black_box(input.as_slice()), &mut output) }
+                output
+            })
+        );
+
+        group.bench_with_input(BenchmarkId::new("no-op fallback", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
                 fallback_decode(black_box(input.as_slice()), &mut output);
