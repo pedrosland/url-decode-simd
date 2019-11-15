@@ -54,7 +54,10 @@ macro_rules! print_m128i {
 #[target_feature(enable = "avx")]
 pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     let mut src = src;
-    // let mut dst_offset = 0;
+
+    let byte_plus = _mm_set1_epi8(b'+' as i8);
+    let byte_space = _mm_set1_epi8(b' ' as i8);
+    let byte_percent = _mm_set1_epi8(b'%' as i8);
 
     // Load chunks of 16 bytes of data at a time.
     while src.len() >= 16 {
@@ -65,17 +68,13 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         print_m128i!("chunk", chunk);
 
         // Replace plus (+) with space
-        let search = _mm_set1_epi8(b'+' as i8);
-        let space = _mm_set1_epi8(b' ' as i8);
-        let found = _mm_cmpeq_epi8(chunk, search);
+        let found = _mm_cmpeq_epi8(chunk, byte_plus);
         print_m128i!("found+", found);
-        let chunk = _mm_blendv_epi8(chunk, space, found);
-        print_m128i!("chunk+", _mm_blendv_epi8(chunk, space, found));
+        let chunk = _mm_blendv_epi8(chunk, byte_space, found);
+        print_m128i!("chunk+", chunk);
 
         // Locate percent symbol
-        let search = _mm_set1_epi8(b'%' as i8);
-
-        let found = _mm_cmpeq_epi8(chunk, search);
+        let found = _mm_cmpeq_epi8(chunk, byte_percent);
         let found = _mm_and_si128(found, _mm_xor_si128(found, _mm_srli_si128(found, 1)));
         let found = _mm_and_si128(found, _mm_xor_si128(found, _mm_srli_si128(found, 2)));
         print_m128i!("found", found);
