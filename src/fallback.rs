@@ -245,6 +245,15 @@ mod tests {
     }
 
     #[test]
+    fn test_replace_plus() {
+        let mut result = Vec::new();
+
+        let v = b"a+a+a+a+a+a+a+a+";
+        decode(v, &mut result);
+        assert_eq!(b"a a a a a a a a ", &result[..]);
+    }
+
+    #[test]
     fn test_random_junk() {
         let mut result = Vec::new();
 

@@ -61,10 +61,19 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         // Load data from unaligned address.
         // TODO: is this notably slower than loading from an aligned address?
         // TODO: is _mm_lddqu_si128 better?
-        let chunk: __m128i = _mm_loadu_si128(src.as_ptr() as *const __m128i);
+        let chunk = _mm_loadu_si128(src.as_ptr() as *const __m128i);
         print_m128i!("chunk", chunk);
 
-        let search: __m128i = _mm_set1_epi8(b'%' as i8);
+        // Replace plus (+) with space
+        let search = _mm_set1_epi8(b'+' as i8);
+        let space = _mm_set1_epi8(b' ' as i8);
+        let found = _mm_cmpeq_epi8(chunk, search);
+        print_m128i!("found+", found);
+        let chunk = _mm_blendv_epi8(chunk, space, found);
+        print_m128i!("chunk+", _mm_blendv_epi8(chunk, space, found));
+
+        // Locate percent symbol
+        let search = _mm_set1_epi8(b'%' as i8);
 
         let found = _mm_cmpeq_epi8(chunk, search);
         let found = _mm_and_si128(found, _mm_xor_si128(found, _mm_srli_si128(found, 1)));
@@ -340,6 +349,15 @@ mod tests {
         let v = b"%AAaaaaaaaaaaaaa";
         unsafe { url_decode(v, &mut result) };
         assert_eq!(b"\xAAaaaaaaaaaaaaa", &result[..]);
+    }
+
+    #[test]
+    fn test_replace_plus() {
+        let mut result = Vec::new();
+
+        let v = b"a+a+a+a+a+a+a+a+";
+        unsafe { url_decode(v, &mut result) };
+        assert_eq!(b"a a a a a a a a ", &result[..]);
     }
 
     #[test]
