@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Throughput, black_box, criterion_group, criterion_main, Criterion};
 
-use url_decode_simd::{url_decode, fallback_decode};
+use url_decode_simd::{sse41, fallback};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("URL Decode");
@@ -23,7 +23,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("mixed simd", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                unsafe { url_decode(black_box(input.as_slice()), &mut output) }
+                unsafe { sse41::url_decode(black_box(input.as_slice()), &mut output) }
                 output
             })
         );
@@ -31,7 +31,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("mixed fallback", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                fallback_decode(black_box(input.as_slice()), &mut output);
+                fallback::url_decode(black_box(input.as_slice()), &mut output);
                 output
             })
         );
@@ -50,7 +50,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("no-op simd", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                unsafe { url_decode(black_box(input.as_slice()), &mut output) }
+                unsafe { sse41::url_decode(black_box(input.as_slice()), &mut output) }
                 output
             })
         );
@@ -58,7 +58,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("no-op fallback", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                fallback_decode(black_box(input.as_slice()), &mut output);
+                fallback::url_decode(black_box(input.as_slice()), &mut output);
                 output
             })
         );
@@ -78,7 +78,7 @@ pub fn small_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("fallback", i), &i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                fallback_decode(black_box(input), &mut output);
+                fallback::url_decode(black_box(input), &mut output);
                 output
             })
         );

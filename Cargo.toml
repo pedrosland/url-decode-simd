@@ -9,6 +9,10 @@ repository = "https://github.com/pedrosland/url-decode-simd"
 [lib]
 bench = false
 
+[features]
+debug_simd = [] # Enables debugging information to be printed to the console when using a SIMD implementation.
+benchmark = []  # For internal use. Exposes internal functions explicitly for benchmarking.
+
 [dependencies]
 memchr = "2.2.1"
 aligned = "0.3"
