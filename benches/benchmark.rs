@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Throughput, black_box, criterion_group, criterion_main, Criterion};
 
-use url_decode_simd::{sse41, fallback};
+use url_decode_simd::{fallback};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("URL Decode");
@@ -20,13 +20,18 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         }
 
         group.throughput(Throughput::Bytes(input.len() as u64));
-        group.bench_with_input(BenchmarkId::new("mixed simd", i), i,
+
+        #[cfg(all(target_feature = "sse4.1", target_feature = "popcnt"))]
+        group.bench_with_input(BenchmarkId::new("mixed SSE4.1", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                unsafe { sse41::url_decode(black_box(input.as_slice()), &mut output) }
+                unsafe { url_decode_simd::sse41::url_decode(black_box(input.as_slice()), &mut output) }
                 output
             })
         );
+
+        #[cfg(not(all(target_feature = "sse4.1", target_feature = "popcnt")))]
+        println!("--- Skipping SSE4.1 (no CPU support compiled in)");
 
         group.bench_with_input(BenchmarkId::new("mixed fallback", i), i,
             |b, _i| b.iter(|| {
@@ -47,13 +52,18 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         }
 
         group.throughput(Throughput::Bytes(input.len() as u64));
-        group.bench_with_input(BenchmarkId::new("no-op simd", i), i,
+
+        #[cfg(all(target_feature = "sse4.1", target_feature = "popcnt"))]
+        group.bench_with_input(BenchmarkId::new("no-op SSE4.1", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                unsafe { sse41::url_decode(black_box(input.as_slice()), &mut output) }
+                unsafe { url_decode_simd::sse41::url_decode(black_box(input.as_slice()), &mut output) }
                 output
             })
         );
+
+        #[cfg(not(all(target_feature = "sse4.1", target_feature = "popcnt")))]
+        println!("--- Skipping SSE4.1 (no CPU support compiled in)");
 
         group.bench_with_input(BenchmarkId::new("no-op fallback", i), i,
             |b, _i| b.iter(|| {

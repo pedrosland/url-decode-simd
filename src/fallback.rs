@@ -36,6 +36,7 @@ pub fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     };
 }
 
+#[cfg(all(any(target_feature = "avx2", target_feature = "sse4.1"), target_feature = "popcnt"))]
 pub (crate) fn decode_extend(src: &[u8], dst: &mut Vec<u8>) {
     let src = replace_plus(src);
     match percent_decode(&src).if_any() {

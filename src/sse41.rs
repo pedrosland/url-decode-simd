@@ -10,12 +10,13 @@ use shuffle_mask::SHUFFLE_MASK;
 
 /// This is an SSE4.1 + POPCNT implementation of URL decode.
 ///
-/// It requires SSE4.1 for `_mm_blendv_epi8` and `_mm_test_all_zeros`.
+/// It requires SSE4.1 for `_mm_blendv_epi8` and `_mm_testz_si128`.
 ///
 /// No validation of UTF-8 data is performed so if a string is desired,
 /// it should be sanitised with eg [String::from_utf8_lossy]
 /// (https://doc.rust-lang.org/std/string/struct.String.html#method.from_utf8_lossy)
-#[target_feature(enable = "sse4.1,popcnt")]
+#[target_feature(enable = "sse4.1")]
+#[target_feature(enable = "popcnt")]
 pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     let mut src = src;
 
@@ -42,7 +43,8 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let found = _mm_and_si128(found, _mm_xor_si128(found, _mm_srli_si128(found, 2)));
         print_m128i!("found", found);
 
-        if _mm_test_all_zeros(found, found) > 0 {
+        // Check if all bytes are 0, if so then there are no % or + symbols.
+        if _mm_testz_si128(found, found) > 0 {
             let x: [u8; 16] = mem::transmute(chunk);
             dst.extend_from_slice(&x[..16]);
             src = &src[16..];
