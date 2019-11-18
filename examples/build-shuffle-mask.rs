@@ -2,25 +2,18 @@
 //!
 //! Used to generate the shuffle_mask lookup table in shuffle_mask.rs.
 //!
-//! Note that this particular algorithm can produce masks that are technically
-//! not correct but it doesn't matter because of how they are used.
-//!
-//! An input found_mask of 0b1000 could see an output like [0, 2, 2, 0].
-//! The last digit doesn't matter as there was an encoded character found
-//! and the last digit is unused in url decode's output.
-//!
 //! Example usage:
 //! ```
 //! cargo run --example build-shuffle-mask > /tmp/shuffle_mask.rs
 //! mv /tmp/shuffle_mask.rs src/shuffle_mask.rs
 //! ```
 
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
-
-use std::mem;
-
 fn main() {
+    // Quick check that this works.
+    let result = build_mask_128(0b10001);
+    let expected = [0, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+    assert_eq!(result, expected);
+
     // Note: the last 2+ bytes of the mask are useless depending on how many valid
     // percent symbols were found.
     // Note: the first byte is always 0 for valid masks.
@@ -35,33 +28,30 @@ fn main() {
     );
 
     for i in 0..=max {
-        let mask = unsafe { build_mask(i) };
+        let mask = build_mask_128(i as u16);
         println!("    {:?},", mask);
     }
 
-    println!("];");
+    println!("];\n");
 }
 
-#[target_feature(enable = "sse2")]
-unsafe fn build_mask(found_mask: u16) -> [u8; 16] {
-    let mut shift_mask = _mm_set1_epi8(255u8 as i8);
-    let mut offset_map = _mm_set1_epi8(0);
-    let mut percent_offset = 0b1;
-    let mut num_percent = 0;
-    let two = _mm_set1_epi8(2);
-
-    for _ in 0..16 {
-        shift_mask = _mm_slli_si128(shift_mask, 1);
-        if percent_offset & found_mask > 0 {
-            let mut this_offset = _mm_and_si128(two, shift_mask);
-            for _ in 0..num_percent {
-                this_offset = _mm_srli_si128(this_offset, 2);
+fn build_mask_128(found_mask: u16) -> [u8; 16] {
+    let mut shuffle_map: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut num_junk = 0usize;
+    let mut out_i = 0;
+    let mut mask = 1;
+    while out_i < 16 {
+        shuffle_map[out_i] = num_junk as u8;
+        if found_mask & mask > 0 {
+            num_junk += 2;
+            // If out_i < 2 this is certainly invalid.
+            // There will be other invalid masks not covered by this.
+            if num_junk > 2 && out_i >= 2 {
+                out_i -= 2;
             }
-            offset_map = _mm_add_epi8(this_offset, offset_map);
-            num_percent += 1;
         }
-        percent_offset = percent_offset << 1;
+        mask = mask << 1;
+        out_i += 1;
     }
-
-    mem::transmute(offset_map)
+    shuffle_map
 }
