@@ -78,6 +78,11 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         print_m128i!("digit_mask1", digit_mask);
         print_m128i!("first1-1", first_part1);
 
+        // Zero the 6th bit (!0x20) to convert lowercase characters as uppercase
+        let lower_mask = _mm_set1_epi8(0b11011111u8 as i8);
+        let first_and_second = _mm_and_si128(first_and_second, lower_mask);
+        print_m128i!("first_and_second", first_and_second);
+
         // Uppercase hex
         let byte_upper = _mm_set1_epi8(b'A' as i8 - 10);
         let digit_mask1 = _mm_cmplt_epi8(first_and_second, _mm_set1_epi8(b'G' as i8)); // G is character after F
@@ -88,16 +93,6 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         print_m128i!("digit_mask2", digit_mask);
         print_m128i!("first1-2", first_part2);
 
-        // Lowercase hex
-        let byte_lower = _mm_set1_epi8(b'a' as i8 - 10);
-        let digit_mask1 = _mm_cmplt_epi8(first_and_second, _mm_set1_epi8(b'g' as i8)); // g is character after f
-        let digit_mask2 = _mm_cmpgt_epi8(first_and_second, _mm_set1_epi8(b'`' as i8)); // ` is character before a
-        let digit_mask = _mm_and_si128(digit_mask1, digit_mask2);
-        let first_part3 = _mm_and_si128(digit_mask, _mm_sub_epi8(first_and_second, byte_lower));
-        let valid_mask = _mm_or_si128(valid_mask, digit_mask);
-        print_m128i!("digit_mask3", digit_mask);
-        print_m128i!("first1-3", first_part3);
-
         // Check that both digits are valid
         let valid_mask = _mm_and_si128(valid_mask, _mm_slli_si128(valid_mask, 1));
         let valid_mask = _mm_or_si128(valid_mask, _mm_srli_si128(valid_mask, 1));
@@ -107,7 +102,7 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         print_m128i!("found2", found);
 
         // Merge first hex digit transforms
-        let first_and_second = _mm_or_si128(_mm_or_si128(first_part1, first_part2), first_part3);
+        let first_and_second = _mm_or_si128(first_part1, first_part2);
         let first_and_second = _mm_and_si128(valid_mask, first_and_second);
 
         // Note: I really want a `<< 4` for epi8 but it doesn't exist :(
