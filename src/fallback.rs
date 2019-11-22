@@ -28,6 +28,22 @@ fn replace_plus(input: &[u8]) -> Cow<[u8]> {
     }
 }
 
+/// Decode a URL-encoded value into the given Vector.
+///
+/// This is a non-SIMD implementation used as a fallback if the required SIMD instructions
+/// are not supported.
+///
+/// # Examples
+///
+/// ```
+/// use url_decode_simd::fallback_decode;
+///
+/// let input = b"Hello%20world%21";
+/// let mut output = Vec::new();
+///
+/// fallback_decode(input, &mut output);
+/// assert_eq!(b"Hello world!", &output[..]);
+/// ```
 pub fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     let src = replace_plus(src);
     match percent_decode(&src).if_any() {
@@ -36,6 +52,20 @@ pub fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     };
 }
 
+/// Decode a URL-encoded value and extend the given vector with the result.
+///
+/// This is used if the length of the input data to the SIMD-implementations is not divisible
+/// by the width of the SIMD instructions.
+///
+/// # Examples
+///
+/// ```
+/// let input = b"%20world%21";
+/// let mut output = b"Hello".to_vec();
+///
+/// decode_extend(input, &mut output);
+/// assert_eq!(b"Hello world!", &output);
+/// ```
 #[cfg(all(any(target_feature = "avx2", target_feature = "sse4.1"), target_feature = "popcnt"))]
 pub (crate) fn decode_extend(src: &[u8], dst: &mut Vec<u8>) {
     let src = replace_plus(src);
