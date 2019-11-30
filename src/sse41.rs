@@ -20,6 +20,10 @@ use shuffle_mask::SHUFFLE_MASK;
 pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     let mut src = src;
 
+    let mut dst_len = dst.len();
+    dst.reserve_exact(src.len());
+    let mut dst_ptr = dst.as_mut_ptr().add(dst_len);
+
     let byte_plus = _mm_set1_epi8(b'+' as i8);
     let byte_space = _mm_set1_epi8(b' ' as i8);
     let byte_percent = _mm_set1_epi8(b'%' as i8);
@@ -45,9 +49,10 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
 
         // Check if all bytes are 0, if so then there are no % or + symbols.
         if _mm_testz_si128(found, found) > 0 {
-            let x: [u8; 16] = mem::transmute(chunk);
-            dst.extend_from_slice(&x[..16]);
-            src = &src[16..];
+            _mm_storeu_si128(dst_ptr as *mut __m128i, chunk);
+            dst_ptr = dst_ptr.offset(16);
+            dst_len += 16;
+            src = &src.get_unchecked(16..);
             continue;
         }
 
@@ -166,12 +171,15 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         let hex = _mm_shuffle_epi8(hex, shuffle_map);
 
         // Copy to dst
-        let x: [u8; 16] = mem::transmute(hex);
-        dst.extend_from_slice(&x[..dst_end]);
+        _mm_storeu_si128(dst_ptr as *mut __m128i, hex);
+        dst_ptr = dst_ptr.offset(dst_end as isize);
+        dst_len += dst_end;
 
         // Advance
-        src = &src[src_end..];
+        src = &src.get_unchecked(src_end..);
     }
+
+    dst.set_len(dst_len);
 
     if src.len() > 0 {
         fallback::decode_extend(src, dst);
