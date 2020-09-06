@@ -25,7 +25,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("mixed SSE4.1", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                unsafe { url_decode_simd::sse41::url_decode(black_box(input.as_slice()), &mut output) }
+                unsafe { url_decode_simd::sse41::url_decode(black_box(input.as_slice()), &mut output, None) };
                 output
             })
         );
@@ -57,7 +57,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("no-op SSE4.1", i), i,
             |b, _i| b.iter(|| {
                 let mut output = Vec::with_capacity(input.len());
-                unsafe { url_decode_simd::sse41::url_decode(black_box(input.as_slice()), &mut output) }
+                unsafe { url_decode_simd::sse41::url_decode(black_box(input.as_slice()), &mut output, None) };
                 output
             })
         );

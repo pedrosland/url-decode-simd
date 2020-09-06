@@ -15,10 +15,12 @@ use shuffle_mask::SHUFFLE_MASK;
 /// No validation of UTF-8 data is performed so if a string is desired,
 /// it should be sanitised with eg [String::from_utf8_lossy]
 /// (https://doc.rust-lang.org/std/string/struct.String.html#method.from_utf8_lossy)
+///
+/// The return value is the unprocessed offset from the input slice.
 #[target_feature(enable = "sse4.1")]
 #[target_feature(enable = "popcnt")]
-pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
-    let mut src = src;
+pub unsafe fn url_decode(orig_src: &[u8], dst: &mut Vec<u8>, stop_byte: Option<u8>) -> usize {
+    let mut src = orig_src;
 
     let mut dst_len = dst.len();
     dst.reserve_exact(src.len());
@@ -62,6 +64,16 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
         print_m128i!("mask1", mask1);
         let first1 = _mm_and_si128(chunk, mask1);
         print_m128i!("first1", first1);
+
+        if let Some(b) = stop_byte {
+            let stop_found = _mm_cmpeq_epi8(first1, _mm_set1_epi8(b as i8));
+            print_m128i!("stop_found", stop_found);
+            // Check if all bytes are 0, if so then there are no `b` bytes immediately after % symbols.
+            if _mm_testz_si128(stop_found, stop_found) == 0 {
+                dst.set_len(dst_len);
+                return orig_src.len() - src.len()
+            }
+        }
 
         // Using `found` allows us to not depend on mask1
         let mask2 = _mm_slli_si128(found, 2);
@@ -184,6 +196,8 @@ pub unsafe fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     if src.len() > 0 {
         fallback::decode_extend(src, dst);
     }
+
+    orig_src.len()
 }
 
 #[cfg(test)]
@@ -197,8 +211,9 @@ mod tests {
         let v = b"%20\0\0\0\0\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
-        unsafe { url_decode(v, &mut result) };
-        assert_eq!(b" \0\0\0\0\0\0\0\0\0\0\0\0\0", &result[..])
+        let offset = unsafe { url_decode(v, &mut result, None) };
+        assert_eq!(b" \0\0\0\0\0\0\0\0\0\0\0\0\0", &result[..]);
+        assert_eq!(v.len(), offset);
     }
 
     #[test]
@@ -206,8 +221,9 @@ mod tests {
         let v = b"%41\0\0\0\0\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
-        unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"A\0\0\0\0\0\0\0\0\0\0\0\0\0", &result[..])
+        let offset = unsafe { url_decode(v, &mut result, None) };
+        assert_eq!(b"A\0\0\0\0\0\0\0\0\0\0\0\0\0", &result[..]);
+        assert_eq!(v.len(), offset);
     }
 
     #[test]
@@ -215,8 +231,9 @@ mod tests {
         let v = b"%41%42\0\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
-        unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"AB\0\0\0\0\0\0\0\0\0\0", &result[..])
+        let offset = unsafe { url_decode(v, &mut result, None) };
+        assert_eq!(b"AB\0\0\0\0\0\0\0\0\0\0", &result[..]);
+        assert_eq!(v.len(), offset);
     }
 
     #[test]
@@ -224,8 +241,9 @@ mod tests {
         let v = b"%41a%42b\0\0\0\0\0\0\0\0\0";
         let mut result = Vec::new();
 
-        unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"AaBb\0\0\0\0\0\0\0\0\0", &result[..])
+        let offset = unsafe { url_decode(v, &mut result, None) };
+        assert_eq!(b"AaBb\0\0\0\0\0\0\0\0\0", &result[..]);
+        assert_eq!(v.len(), offset);
     }
 
     #[test]
@@ -233,8 +251,9 @@ mod tests {
         let v = b"%41a%42b12345678";
         let mut result = Vec::new();
 
-        unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"AaBb12345678", &result[..])
+        let offset = unsafe { url_decode(v, &mut result, None) };
+        assert_eq!(b"AaBb12345678", &result[..]);
+        assert_eq!(v.len(), offset);
     }
 
     #[test]
@@ -242,8 +261,9 @@ mod tests {
         let v = b"%4Ba%4Cb12345678";
         let mut result = Vec::new();
 
-        unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"KaLb12345678", &result[..])
+        let offset = unsafe { url_decode(v, &mut result, None) };
+        assert_eq!(b"KaLb12345678", &result[..]);
+        assert_eq!(v.len(), offset);
     }
 
     #[test]
@@ -251,8 +271,9 @@ mod tests {
         let v = b"%4ba%4cb12345678";
         let mut result = Vec::new();
 
-        unsafe { url_decode(v, &mut result) };
-        assert_eq!(b"KaLb12345678", &result[..])
+        let offset = unsafe { url_decode(v, &mut result, None) };
+        assert_eq!(b"KaLb12345678", &result[..]);
+        assert_eq!(v.len(), offset);
     }
 
     #[test]
@@ -260,27 +281,27 @@ mod tests {
         let mut result = Vec::new();
 
         let v = b"%%12345678901234";
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"%\x12345678901234", &result[..]);
 
         let v = b"%1%2345678901234";
         result.clear();
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"%1\x2345678901234", &result[..]);
 
         let v = b"%%%1234567890123";
         result.clear();
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"%%\x1234567890123", &result[..]);
 
         let v = b"%-12345678901234";
         result.clear();
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"%-12345678901234", &result[..]);
 
         let v = b"%1-2345678901234";
         result.clear();
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"%1-2345678901234", &result[..]);
     }
 
@@ -290,13 +311,13 @@ mod tests {
 
         // last char of block is %
         let v = b"aaaaaaaaaaaaaaa%";
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"aaaaaaaaaaaaaaa%", &result[..]);
 
         // 2nd last char of block is %
         let v = b"aaaaaaaaaaaaaa%a";
         result.clear();
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"aaaaaaaaaaaaaa%a", &result[..]);
     }
 
@@ -306,13 +327,13 @@ mod tests {
 
         // last char of block is %
         let v = b"aaaaaaaaaaaaaaa%aaaaaaaaaaaaaaaa";
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"aaaaaaaaaaaaaaa\xAAaaaaaaaaaaaaaa", &result[..]);
 
         // 2nd last char of block is %
         let v = b"aaaaaaaaaaaaaa%aaaaaaaaaaaaaaaaa";
         result.clear();
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"aaaaaaaaaaaaaa\xAAaaaaaaaaaaaaaaa", &result[..]);
     }
 
@@ -321,7 +342,7 @@ mod tests {
         let mut result = Vec::new();
 
         let v = b"%AAaaaaaaaaaaaaa";
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"\xAAaaaaaaaaaaaaa", &result[..]);
     }
 
@@ -330,7 +351,7 @@ mod tests {
         let mut result = Vec::new();
 
         let v = b"a+a+a+a+a+a+a+a+";
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"a a a a a a a a ", &result[..]);
     }
 
@@ -339,7 +360,35 @@ mod tests {
         let mut result = Vec::new();
 
         let v = b"\xCF%%sA\x00`A%5%%6%6\xEF";
-        unsafe { url_decode(v, &mut result) };
+        unsafe { url_decode(v, &mut result, None) };
         assert_eq!(b"\xCF%%sA\x00`A%5%%6%6\xEF", &result[..]);
+    }
+
+    #[test]
+    fn test_stop() {
+        // The handling of offset and bytes processed in `result` isn't set in stone and could
+        // change if helpful for the 2nd and 3rd inputs. Those tests are written as they are to
+        // ensure that the result and the offset are correct with respect to each other.
+
+        let mut result = Vec::new();
+
+        // first char of block is %
+        let v = b"%uaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let offset = unsafe { url_decode(v, &mut result, Some(b'u')) };
+        assert!(result.is_empty());
+        assert_eq!(0, offset);
+
+        // last char of block is %
+        let v = b"aaaaaaaaaaaaaaa%uaaaaaaaaaaaaaaa";
+        let offset = unsafe { url_decode(v, &mut result, Some(b'u')) };
+        assert_eq!(b"aaaaaaaaaaaaaaa", &result[..]);
+        assert_eq!(15, offset);
+
+        // 2nd last char of block is %
+        let v = b"aaaaaaaaaaaaaa%uaaaaaaaaaaaaaaaa";
+        result.clear();
+        let offset = unsafe { url_decode(v, &mut result, Some(b'u')) };
+        assert!(result.is_empty());
+        assert_eq!(0, offset);
     }
 }

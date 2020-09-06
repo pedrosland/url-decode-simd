@@ -38,7 +38,7 @@ pub use fallback::url_decode as fallback_decode;
 #[allow(unreachable_code)]
 pub fn url_decode(src: &[u8], dst: &mut Vec<u8>) {
     #[cfg(all(target_feature = "sse4.1", target_feature = "popcnt"))]
-    return unsafe { sse41::url_decode(src, dst) };
+    return unsafe { sse41::url_decode(src, dst, None); };
 
     fallback::url_decode(src, dst);
 }
